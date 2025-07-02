@@ -1,0 +1,18 @@
+FROM moodlehq/moodle-php-apache:8.1-bookworm
+
+RUN apt-get update && apt-get install -y \
+    libxml2-dev \
+    libzip-dev \
+    libicu-dev \
+    zlib1g-dev \
+    libpng-dev \
+    libjpeg-dev \
+    libonig-dev \
+    libcurl4-openssl-dev \
+    unzip \
+    git \
+ && docker-php-ext-install intl zip pdo pdo_mysql mysqli xml gd curl soap \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN chown -R www-data:www-data /var/www/html

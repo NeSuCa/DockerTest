@@ -1,0 +1,81 @@
+#!/bin/bash
+
+# 1. アップデート & 必要パッケージのインストール
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y nginx apache2 mariadb-server php-fpm php-mysql php-xml php-curl php-zip \
+    php-gd php-intl php-soap php-mbstring php-ldap php-bcmath php-readline php-cli \
+    php-opcache php-redis redis unzip git wget
+
+# 2. MariaDBの初期設定（rootパスワード：moodlepass）
+sudo mysql <<EOF
+CREATE DATABASE moodle DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'moodleuser'@'localhost' IDENTIFIED BY 'moodlepass';
+GRANT ALL PRIVILEGES ON moodle.* TO 'moodleuser'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+
+# 3. Redisの軽量設定（128MB上限）
+sudo sed -i 's/^# maxmemory .*/maxmemory 128mb/' /etc/redis/redis.conf
+sudo sed -i 's/^# maxmemory-policy .*/maxmemory-policy allkeys-lru/' /etc/redis/redis.conf
+sudo sed -i 's/^save .*/save ""/' /etc/redis/redis.conf
+sudo sed -i 's/^appendonly .*/appendonly no/' /etc/redis/redis.conf
+sudo systemctl restart redis
+
+# 4. Moodleのダウンロードと配置
+sudo mkdir -p /var/www/moodle
+cd /tmp
+wget https://download.moodle.org/latest.zip
+unzip latest.zip
+sudo mv moodle /var/www/
+sudo chown -R www-data:www-data /var/www/moodle
+
+# 5. Moodledata ディレクトリの作成
+sudo mkdir -p /var/moodledata
+sudo chown -R www-data:www-data /var/moodledata
+sudo chmod 770 /var/moodledata
+
+# 6. PHP 設定調整（例）
+sudo sed -i 's/^memory_limit = .*/memory_limit = 256M/' /etc/php/*/fpm/php.ini
+sudo sed -i 's/^post_max_size = .*/post_max_size = 50M/' /etc/php/*/fpm/php.ini
+sudo sed -i 's/^upload_max_filesize = .*/upload_max_filesize = 50M/' /etc/php/*/fpm/php.ini
+
+# 7. Apache設定
+sudo tee /etc/apache2/sites-available/moodle.conf > /dev/null <<EOF
+<VirtualHost 127.0.0.1:8080>
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/moodle
+    <Directory /var/www/moodle>
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+</VirtualHost>
+EOF
+
+sudo a2ensite moodle
+sudo a2enmod rewrite proxy_fcgi setenvif
+sudo systemctl reload apache2
+
+# 8. Nginx（リバースプロキシ設定）
+sudo tee /etc/nginx/sites-available/moodle > /dev/null <<EOF
+server {
+    listen 80;
+    server_name localhost;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOF
+
+sudo ln -s /etc/nginx/sites-available/moodle /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl restart nginx
+
+# 9. PHP-FPM 再起動
+sudo systemctl restart php*-fpm
+
+# 完了メッセージ
+echo "✅ Moodle セットアップ準備完了！ブラウザで http://localhost にアクセスしてインストールを完了してください。"
